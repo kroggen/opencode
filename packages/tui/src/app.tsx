@@ -360,6 +360,12 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
   )
   yield* Effect.sync(() => {
     win32FlushInputBuffer()
+    if (result.epilogue || result.reason !== undefined) {
+      // The renderer restores the cursor to the launch cell, which can sit
+      // mid-line over old scrollback; start on a fresh line and clear below
+      // so the epilogue/error cannot splice into existing output.
+      process.stdout.write("\r\x1b[0J")
+    }
     if (result.reason !== undefined)
       process.stderr.write((cliErrorMessage(result.reason) ?? errorFormat(result.reason)) + "\n")
     if (result.epilogue) process.stdout.write(result.epilogue + "\n")
