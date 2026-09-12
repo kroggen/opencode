@@ -39,6 +39,49 @@
   <a href="README.vi.md">Tiếng Việt</a>
 </p>
 
+## Personal fixes branch
+
+This branch carries two fixes on top of upstream `dev`:
+
+1. `fix(tui): restore terminal capability detection over SSH` — pass `remote: false` to the opentui renderer so SSH sessions still get `TERM`/`COLORTERM`/multiplexer parsing instead of truecolor-only output that 256-color-only terminals (e.g. macOS Terminal.app) cannot render ([issue #39923](https://github.com/anomalyco/opencode/issues/39923)).
+2. `fix(core): break filesystem/search import cycle` — remove the runtime import cycle between `packages/core/src/filesystem.ts` and `filesystem/search.ts` that crashes every prompt send in compiled builds (`TypeError: undefined is not an object (evaluating 'a.name')` in `SystemPrompt.environment` → "Failed to send prompt"). Same root cause as upstream issues #48372 / #48645 and PR #48397.
+
+### Build
+
+Requirements: [Bun](https://bun.sh) (matching the `packageManager` field in `package.json`), git. No global Node needed.
+
+```sh
+git clone -b personal-fixes https://github.com/kroggen/opencode.git
+cd opencode
+bun install
+
+# Build a single-file binary for the current platform.
+# OPENCODE_CHANNEL=prod makes the binary share the released install's
+# database (opencode.db); anything else creates a per-channel empty DB.
+cd packages/opencode
+OPENCODE_CHANNEL=prod bun run build --single --skip-install --skip-embed-web-ui
+```
+
+Flags:
+- `--single` — build only for the current OS/arch (default builds every target)
+- `--skip-embed-web-ui` — skip building the embedded web UI (much less RAM; the web UI is then proxied from `app.opencode.ai`). Drop this flag if you want the web UI embedded and have ≥8 GB RAM.
+- `--skip-install` — do not re-resolve cross-platform native deps (fine for a single-platform build)
+
+The result is a **self-contained compiled binary** (not a script), ~134 MB:
+
+```
+packages/opencode/dist/opencode-linux-x64/bin/opencode
+```
+
+Install and verify:
+
+```sh
+cp packages/opencode/dist/opencode-linux-x64/bin/opencode ~/.opencode/bin/opencode
+opencode --version   # shows 0.0.0-prod-<timestamp>
+```
+
+Note: `opencode upgrade` overwrites the installed binary with the official release — rebuild/re-copy after upgrading until these fixes land upstream.
+
 [![OpenCode Terminal UI](packages/web/src/assets/lander/screenshot.png)](https://opencode.ai)
 
 ---
