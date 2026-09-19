@@ -298,6 +298,21 @@ export function Prompt(props: PromptProps) {
     interrupt: 0,
   })
 
+  // Follow-ups submitted while a turn is running wait here and auto-send when
+  // the session goes idle. ENTER on an empty input sends the next one
+  // immediately (steer into the conversation); with the queue empty, the
+  // double-ENTER interrupt arms instead.
+  const [sendQueue, setSendQueue] = createSignal<{ text: string; run: () => Promise<unknown> }[]>([])
+
+  function sendQueued(): boolean {
+    const items = sendQueue()
+    const next = items[0]
+    if (!next) return false
+    setSendQueue(items.slice(1))
+    void next.run()
+    return true
+  }
+
   createEffect(
     on(
       () => props.sessionID,
@@ -307,6 +322,34 @@ export function Prompt(props: PromptProps) {
       { defer: true },
     ),
   )
+
+  createEffect(
+    on(
+      () => props.sessionID,
+      () => {
+        setSendQueue([])
+      },
+      { defer: true },
+    ),
+  )
+
+  // Auto-send queued follow-ups when the turn finishes. `draining` guards
+  // against re-entrancy while the server status is still catching up.
+  let draining = false
+  createEffect(() => {
+    if (status().type !== "idle") {
+      draining = false
+      return
+    }
+    if (draining) return
+    const items = sendQueue()
+    if (items.length === 0) return
+    draining = true
+    setSendQueue(items.slice(1))
+    void items[0]!.run().finally(() => {
+      draining = false
+    })
+  })
 
   // Initialize agent/model/variant from last user message when session changes
   let syncedSessionID: string | undefined
@@ -965,9 +1008,11 @@ export function Prompt(props: PromptProps) {
     if (workspace.creating() || move.creating()) return false
     if (auto()?.visible) return false
     if (!store.prompt.input) {
-      // Double-ENTER on a busy session interrupts the running turn, mirroring
-      // the double-ESC keybind (Cursor-style follow-up flow).
-      if (props.sessionID && status().type !== "idle") armInterrupt(props.sessionID)
+      if (props.sessionID && status().type !== "idle") {
+        // ENTER sends the next queued follow-up immediately; with nothing
+        // queued it arms the double-ENTER interrupt (like double-ESC).
+        if (!sendQueued()) armInterrupt(props.sessionID)
+      }
       return false
     }
     const agent = local.agent.current()
@@ -1101,6 +1146,50 @@ export function Prompt(props: PromptProps) {
         variant,
         parts: nonTextParts.filter((x) => x.type === "file"),
       })
+    } else if (props.sessionID && status().type !== "idle") {
+      // Busy: queue the follow-up locally. It auto-sends when the current
+      // turn finishes; ENTER on an empty input sends it immediately.
+      const queuedSessionID = props.sessionID
+      const queuedAgent = agent.name
+      const queuedModel = selectedModel
+      const queuedVariant = variant
+      const queuedParts = [
+        ...editorParts,
+        {
+          type: "text" as const,
+          text: inputText,
+        },
+        ...nonTextParts,
+      ]
+      const queuedEditorSent = editorParts.length > 0
+      setSendQueue([
+        ...sendQueue(),
+        {
+          text: inputText,
+          run: () => {
+            const sent = sdk.client.session
+              .prompt(
+                {
+                  sessionID: queuedSessionID,
+                  agent: queuedAgent,
+                  model: queuedModel,
+                  variant: queuedVariant,
+                  parts: queuedParts,
+                },
+                { throwOnError: true },
+              )
+              .catch((error) => {
+                toast.show({
+                  title: "Failed to send prompt",
+                  message: errorMessage(error),
+                  variant: "error",
+                })
+              })
+            if (queuedEditorSent) editor.markSelectionSent()
+            return sent
+          },
+        },
+      ])
     } else {
       move.startSubmit()
       sdk.client.session
@@ -1602,6 +1691,12 @@ export function Prompt(props: PromptProps) {
                     {store.interrupt > 0 ? "again to interrupt" : "interrupt"}
                   </span>
                 </text>
+                <Show when={sendQueue().length > 0}>
+                  <text fg={theme.text}>
+                    enter{" "}
+                    <span style={{ fg: theme.primary }}>{`send queued (${sendQueue().length})`}</span>
+                  </text>
+                </Show>
               </box>
             </Match>
             <Match when={workspace.notice()}>
