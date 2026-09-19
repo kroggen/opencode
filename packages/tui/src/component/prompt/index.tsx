@@ -405,18 +405,7 @@ export function Prompt(props: PromptProps) {
           }
           if (!props.sessionID) return
 
-          setStore("interrupt", store.interrupt + 1)
-
-          setTimeout(() => {
-            setStore("interrupt", 0)
-          }, 5000)
-
-          if (store.interrupt >= 2) {
-            void sdk.client.session.abort({
-              sessionID: props.sessionID,
-            })
-            setStore("interrupt", 0)
-          }
+          armInterrupt(props.sessionID)
           dialog.clear()
         },
       },
@@ -927,6 +916,24 @@ export function Prompt(props: PromptProps) {
     }
   })
 
+  // First press arms (the hint flips to "again to interrupt"), a second press
+  // within the window aborts the run. Shared by the ESC keybind and an empty
+  // ENTER on a busy session, so either key can complete the interrupt.
+  function armInterrupt(sessionID: string) {
+    setStore("interrupt", store.interrupt + 1)
+
+    setTimeout(() => {
+      setStore("interrupt", 0)
+    }, 5000)
+
+    if (store.interrupt >= 2) {
+      void sdk.client.session.abort({
+        sessionID,
+      })
+      setStore("interrupt", 0)
+    }
+  }
+
   let submitting = false
   async function submit() {
     // Prevent overlapping invocations (e.g. a double-pressed Enter, or the
@@ -957,7 +964,12 @@ export function Prompt(props: PromptProps) {
     if (props.disabled) return false
     if (workspace.creating() || move.creating()) return false
     if (auto()?.visible) return false
-    if (!store.prompt.input) return false
+    if (!store.prompt.input) {
+      // Double-ENTER on a busy session interrupts the running turn, mirroring
+      // the double-ESC keybind (Cursor-style follow-up flow).
+      if (props.sessionID && status().type !== "idle") armInterrupt(props.sessionID)
+      return false
+    }
     const agent = local.agent.current()
     if (!agent) return false
     const trimmed = store.prompt.input.trim()
