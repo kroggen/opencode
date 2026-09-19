@@ -1046,6 +1046,10 @@ export function Prompt(props: PromptProps) {
     const variant = local.model.variant.current()
     let sessionID = props.sessionID
     let finishMoveProgress = false
+    // Whether the prompt actually went out now. A follow-up queued while the
+    // session is busy does not scroll the view to the bottom, so reading
+    // history is not interrupted by the submission itself.
+    let sentNow = false
     if (sessionID == null) {
       const selectedWorkspace = workspace.selection()
       const workspaceID = selectedWorkspace?.type === "existing" ? selectedWorkspace.workspaceID : undefined
@@ -1114,6 +1118,7 @@ export function Prompt(props: PromptProps) {
         : []
 
     if (store.mode === "shell") {
+      sentNow = true
       move.startSubmit()
       void sdk.client.session.shell({
         sessionID,
@@ -1129,6 +1134,7 @@ export function Prompt(props: PromptProps) {
       inputText.startsWith("/") &&
       sync.data.command.some((x) => x.name === inputText.split("\n")[0].split(" ")[0].slice(1))
     ) {
+      sentNow = true
       move.startSubmit()
       // Parse command from first line, preserve multi-line content in arguments
       const firstLineEnd = inputText.indexOf("\n")
@@ -1191,6 +1197,7 @@ export function Prompt(props: PromptProps) {
         },
       ])
     } else {
+      sentNow = true
       move.startSubmit()
       sdk.client.session
         .prompt(
@@ -1230,7 +1237,7 @@ export function Prompt(props: PromptProps) {
       parts: [],
     })
     setStore("extmarkToPartIndex", new Map())
-    props.onSubmit?.()
+    if (sentNow) props.onSubmit?.()
 
     // temporary hack to make sure the message is sent
     if (!props.sessionID) {
