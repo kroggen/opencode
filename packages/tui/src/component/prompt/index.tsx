@@ -1080,11 +1080,10 @@ export function Prompt(props: PromptProps) {
           setSendQueue(local.slice(1))
           void runQueuedItem(local[0]!)
         } else if (props.hasQueuedServer?.()) {
-          // Server-side queued messages exist: interrupt so the model
-          // processes them immediately.
+          // Server-side queued messages exist: interrupt the model. The
+          // session loop resumes queued prompts after the cancel settles, so
+          // they are processed immediately as fresh turns.
           void sdk.client.session.abort({ sessionID: props.sessionID }).catch(() => {})
-        } else {
-          armInterrupt(props.sessionID)
         }
       }
       return false
