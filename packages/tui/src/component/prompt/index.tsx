@@ -361,15 +361,25 @@ export function Prompt(props: PromptProps) {
     ),
   )
 
-  createEffect(
-    on(
-      () => props.sessionID,
-      () => {
-        setSendQueue([])
-      },
-      { defer: true },
-    ),
-  )
+  // The queue survives app restarts: it is persisted per session in the KV
+  // state file and reloaded when the session opens.
+  createEffect(() => {
+    if (!kv.ready) return
+    const sessionID = props.sessionID
+    if (!sessionID) {
+      setSendQueue([])
+      return
+    }
+    const saved = kv.get(`queue:${sessionID}`)
+    setSendQueue(Array.isArray(saved) ? saved : [])
+  })
+
+  createEffect(() => {
+    const items = sendQueue()
+    const sessionID = props.sessionID
+    if (!sessionID) return
+    kv.set(`queue:${sessionID}`, items)
+  })
 
   // Auto-send queued follow-ups when the turn finishes. `draining` guards
   // against re-entrancy while the server status is still catching up.
@@ -481,6 +491,13 @@ export function Prompt(props: PromptProps) {
         run: () => {
           setSendQueue(sendQueue().slice(0, -1))
         },
+      },
+      {
+        title: "Edit selected queued message",
+        name: "prompt.queue.edit_selected",
+        category: "Prompt",
+        hidden: true,
+        run: () => {},
       },
       {
         title: "Paste",
@@ -674,7 +691,6 @@ export function Prompt(props: PromptProps) {
       "prompt.editor",
       "prompt.editor_context.clear",
       "prompt.queue.edit",
-      "prompt.queue.remove",
       "prompt.stash",
       "prompt.stash.pop",
       "prompt.stash.list",
@@ -1239,7 +1255,7 @@ export function Prompt(props: PromptProps) {
     } else if (props.sessionID && status().type !== "idle") {
       // Busy: queue the follow-up locally. It auto-sends when the current
       // turn finishes; ctrl+o opens the queue browser to edit or remove it.
-      queueIdCounter += 1
+      queueIdCounter = Math.max(queueIdCounter, ...sendQueue().map((item) => item.id)) + 1
       setSendQueue([
         ...sendQueue(),
         {

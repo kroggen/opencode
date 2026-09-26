@@ -50,6 +50,14 @@ export function DialogQueue(props: {
       }}
       actions={[
         {
+          command: "prompt.queue.edit_selected",
+          title: "edit",
+          onTrigger: (option) => {
+            props.onEdit(option.value)
+            dialog.clear()
+          },
+        },
+        {
           command: "prompt.queue.remove",
           title: "remove",
           onTrigger: (option) => {
