@@ -249,6 +249,14 @@ export function Session() {
     return pending === -1 ? undefined : pending
   })
 
+  // Server-side queued messages: user messages persisted after the in-flight
+  // assistant turn, waiting to be processed by the model.
+  const serverQueued = createMemo(() => {
+    const index = pending()
+    if (index === undefined) return false
+    return messages().some((message, i) => i > index && message.role === "user")
+  })
+
   const lastAssistant = createMemo(() => {
     return messages().findLast((x) => x.role === "assistant")
   })
@@ -1410,6 +1418,7 @@ export function Session() {
                       onSubmit={() => {
                         toBottom()
                       }}
+                      hasQueuedServer={() => serverQueued()}
                       sessionID={route.sessionID}
                       right={<pluginRuntime.Slot name="session_prompt_right" session_id={route.sessionID} />}
                     />

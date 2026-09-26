@@ -70,6 +70,7 @@ export type PromptProps = {
   hint?: JSX.Element
   right?: JSX.Element
   showPlaceholder?: boolean
+  hasQueuedServer?: () => boolean
   placeholders?: {
     normal?: string[]
     shell?: string[]
@@ -1071,11 +1072,16 @@ export function Prompt(props: PromptProps) {
     if (auto()?.visible) return false
     if (!store.prompt.input) {
       if (props.sessionID && status().type !== "idle") {
-        if (sendQueue().length > 0) {
-          // Interrupt the running turn; the queue drain dispatches the queued
-          // follow-up as a fresh turn when the abort settles. Steering into a
-          // tool-executing turn is unreliable: the server aborts the run and
-          // strands the prompt instead of processing it.
+        const local = sendQueue()
+        if (local.length > 0) {
+          // Move the next local follow-up into the server-side queued state:
+          // the model picks it up at the next tool/thinking boundary without
+          // being interrupted.
+          setSendQueue(local.slice(1))
+          void runQueuedItem(local[0]!)
+        } else if (props.hasQueuedServer?.()) {
+          // Server-side queued messages exist: interrupt so the model
+          // processes them immediately.
           void sdk.client.session.abort({ sessionID: props.sessionID }).catch(() => {})
         } else {
           armInterrupt(props.sessionID)
