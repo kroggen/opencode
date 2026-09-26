@@ -27,6 +27,7 @@ import { createSyntaxStyleMemo, generateSubtleSyntax, selectedForeground, useThe
 import { BoxRenderable, Renderable, ScrollBoxRenderable, addDefaultParsers, TextAttributes, RGBA } from "@opentui/core"
 import { Prompt, type PromptRef } from "../../component/prompt"
 import { DialogRewind } from "../../component/dialog-rewind"
+import { createReadingAnchor } from "../../util/scroll-anchor"
 import type {
   AssistantMessage,
   Part,
@@ -441,46 +442,31 @@ export function Session() {
 
   // Hard guarantee that reading is never interrupted: while the viewport is
   // away from the bottom, sticky follow is disabled so nothing (streamed
-  // content, layout shifts, re-engage heuristics) can move the view. This is
-  // polled because wheel scrolling is handled inside the renderer and does not
-  // reach the keybind handlers.
-  let scrollAnchor: { child: Renderable; childY: number; scrollTop: number } | undefined
-  function syncReadingMode() {
-    if (!scroll || scroll.isDestroyed) return
-    const children = scroll.getChildren()
-    const max = scroll.scrollHeight - scroll.height
-    const atBottom = scroll.scrollTop >= max - 1
-    scroll.stickyScroll = atBottom
-    if (atBottom || children.length === 0) {
-      scrollAnchor = undefined
-      return
-    }
-    const scrollTop = scroll.scrollTop
-    const visible = children.find((child) => child.y + child.height > scrollTop)
-    if (!visible) {
-      scrollAnchor = undefined
-      return
-    }
-    if (scrollAnchor && scrollAnchor.child === visible) {
-      const drift = visible.y - scrollAnchor.childY
-      const expected = scrollAnchor.scrollTop + drift
-      if (scrollTop !== expected) {
-        // the user scrolled between polls; adopt their position
-        scrollAnchor = { child: visible, childY: visible.y, scrollTop }
-        return
-      }
-      if (drift !== 0) {
-        const compensated = Math.min(Math.max(expected, 0), max)
-        scroll.scrollTop = compensated
-        scrollAnchor = { child: visible, childY: visible.y, scrollTop: compensated }
-        return
-      }
-    }
-    scrollAnchor = { child: visible, childY: visible.y, scrollTop }
+  // content, layout shifts, re-engage heuristics) can scroll the view.
+  //
+  // Scrolling is only half the story though: async re-renders (thinking blocks
+  // growing, markdown highlight/link passes, collapsing sections) change the
+  // height of content ABOVE the viewport, which shifts the visible text even
+  // though scrollTop never changes. The reading position is therefore anchored
+  // to the deepest renderable spanning the viewport's top edge, and its drift
+  // is compensated synchronously inside the content's onSizeChange - the exact
+  // moment layout changes, before the frame is painted. The short interval is
+  // only a fallback for wheel-driven scroll positions (handled inside the
+  // renderer) and missed events.
+  let readingAnchor: ReturnType<typeof createReadingAnchor> | undefined
+  function compensateAnchor() {
+    readingAnchor?.compensate()
   }
+
   onMount(() => {
-    const timer = setInterval(syncReadingMode, 250)
-    onCleanup(() => clearInterval(timer))
+    if (!scroll || scroll.isDestroyed) return
+    readingAnchor = createReadingAnchor(scroll)
+    const detachAnchor = readingAnchor.attach()
+    const timer = setInterval(compensateAnchor, 250)
+    onCleanup(() => {
+      clearInterval(timer)
+      detachAnchor()
+    })
   })
 
   const local = useLocal()
@@ -867,7 +853,7 @@ export function Session() {
       hidden: true,
       run: () => {
         scroll.scrollBy(-scroll.height / 2)
-        syncReadingMode()
+        compensateAnchor()
         dialog.clear()
       },
     },
@@ -878,7 +864,7 @@ export function Session() {
       hidden: true,
       run: () => {
         scroll.scrollBy(scroll.height / 2)
-        syncReadingMode()
+        compensateAnchor()
         dialog.clear()
       },
     },
@@ -889,7 +875,7 @@ export function Session() {
       hidden: true,
       run: () => {
         scroll.scrollBy(-1)
-        syncReadingMode()
+        compensateAnchor()
         dialog.clear()
       },
     },
@@ -900,7 +886,7 @@ export function Session() {
       hidden: true,
       run: () => {
         scroll.scrollBy(1)
-        syncReadingMode()
+        compensateAnchor()
         dialog.clear()
       },
     },
@@ -911,7 +897,7 @@ export function Session() {
       hidden: true,
       run: () => {
         scroll.scrollBy(-scroll.height / 4)
-        syncReadingMode()
+        compensateAnchor()
         dialog.clear()
       },
     },
@@ -922,7 +908,7 @@ export function Session() {
       hidden: true,
       run: () => {
         scroll.scrollBy(scroll.height / 4)
-        syncReadingMode()
+        compensateAnchor()
         dialog.clear()
       },
     },
@@ -933,7 +919,7 @@ export function Session() {
       hidden: true,
       run: () => {
         scroll.scrollTo(0)
-        syncReadingMode()
+        compensateAnchor()
         dialog.clear()
       },
     },
@@ -945,7 +931,7 @@ export function Session() {
       run: () => {
         scroll.stickyScroll = true
         scroll.scrollTo(scroll.scrollHeight)
-        syncReadingMode()
+        compensateAnchor()
         dialog.clear()
       },
     },
