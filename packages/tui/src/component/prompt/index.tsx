@@ -35,6 +35,7 @@ import { computePromptTraits } from "../../prompt/traits"
 import { expandPastedTextPlaceholders, expandTrackedPastedText } from "../../prompt/part"
 import { usePromptStash } from "../../prompt/stash"
 import { DialogStash } from "../dialog-stash"
+import { DialogQueue } from "../dialog-queue"
 import { type AutocompleteRef, Autocomplete } from "./autocomplete"
 import { useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { AssistantMessage, FilePart, UserMessage } from "@opencode-ai/sdk/v2"
@@ -300,10 +301,54 @@ export function Prompt(props: PromptProps) {
   })
 
   // Follow-ups submitted while a turn is running wait here and auto-send when
-  // the session goes idle. ENTER on an empty input sends the next one
-  // immediately (steer into the conversation); with the queue empty, the
-  // double-ENTER interrupt arms instead.
-  const [sendQueue, setSendQueue] = createSignal<{ text: string; run: () => Promise<unknown> }[]>([])
+  // the session goes idle. ENTER on an empty input interrupts the running turn
+  // and dispatches the next one immediately; ctrl+o opens the queue browser to
+  // edit or remove queued messages.
+  const [sendQueue, setSendQueue] = createSignal<
+    {
+      id: number
+      sessionID: string
+      agent: string
+      model: { providerID: string; modelID: string }
+      variant?: string
+      text: string
+      editorParts: PromptInfo["parts"]
+      fileParts: PromptInfo["parts"]
+      time: number
+    }[]
+  >([])
+  let queueIdCounter = 0
+
+  function runQueuedItem(item: {
+    sessionID: string
+    agent: string
+    model: { providerID: string; modelID: string }
+    variant?: string
+    text: string
+    editorParts: PromptInfo["parts"]
+    fileParts: PromptInfo["parts"]
+  }) {
+    const sent = sdk.client.session
+      .prompt(
+        {
+          sessionID: item.sessionID,
+          agent: item.agent,
+          model: item.model,
+          variant: item.variant,
+          parts: [...item.editorParts, { type: "text" as const, text: item.text }, ...item.fileParts],
+        },
+        { throwOnError: true },
+      )
+      .catch((error) => {
+        toast.show({
+          title: "Failed to send prompt",
+          message: errorMessage(error),
+          variant: "error",
+        })
+      })
+    if (item.editorParts.length > 0) editor.markSelectionSent()
+    return sent
+  }
 
   createEffect(
     on(
@@ -338,7 +383,7 @@ export function Prompt(props: PromptProps) {
     if (items.length === 0) return
     draining = true
     setSendQueue(items.slice(1))
-    void items[0]!.run().finally(() => {
+    void runQueuedItem(items[0]!).finally(() => {
       draining = false
     })
   })
@@ -403,13 +448,27 @@ export function Prompt(props: PromptProps) {
         },
       },
       {
-        title: "Remove queued message",
+        title: "Edit queued messages",
         name: "prompt.queue.remove",
         category: "Prompt",
         hidden: true,
         enabled: sendQueue().length > 0,
         run: () => {
-          setSendQueue(sendQueue().slice(0, -1))
+          dialog.replace(() => (
+            <DialogQueue
+              items={sendQueue()}
+              onEdit={(id) => {
+                const item = sendQueue().find((entry) => entry.id === id)
+                if (!item) return
+                setSendQueue(sendQueue().filter((entry) => entry.id !== id))
+                setStore("prompt", { input: item.text, parts: item.fileParts })
+                input.focus()
+              }}
+              onRemove={(id) => {
+                setSendQueue(sendQueue().filter((entry) => entry.id !== id))
+              }}
+            />
+          ))
         },
       },
       {
@@ -1163,46 +1222,20 @@ export function Prompt(props: PromptProps) {
       })
     } else if (props.sessionID && status().type !== "idle") {
       // Busy: queue the follow-up locally. It auto-sends when the current
-      // turn finishes; ENTER on an empty input sends it immediately.
-      const queuedSessionID = props.sessionID
-      const queuedAgent = agent.name
-      const queuedModel = selectedModel
-      const queuedVariant = variant
-      const queuedParts = [
-        ...editorParts,
-        {
-          type: "text" as const,
-          text: inputText,
-        },
-        ...nonTextParts,
-      ]
-      const queuedEditorSent = editorParts.length > 0
+      // turn finishes; ctrl+o opens the queue browser to edit or remove it.
+      queueIdCounter += 1
       setSendQueue([
         ...sendQueue(),
         {
+          id: queueIdCounter,
+          sessionID: props.sessionID,
+          agent: agent.name,
+          model: selectedModel,
+          variant,
           text: inputText,
-          run: () => {
-            const sent = sdk.client.session
-              .prompt(
-                {
-                  sessionID: queuedSessionID,
-                  agent: queuedAgent,
-                  model: queuedModel,
-                  variant: queuedVariant,
-                  parts: queuedParts,
-                },
-                { throwOnError: true },
-              )
-              .catch((error) => {
-                toast.show({
-                  title: "Failed to send prompt",
-                  message: errorMessage(error),
-                  variant: "error",
-                })
-              })
-            if (queuedEditorSent) editor.markSelectionSent()
-            return sent
-          },
+          editorParts,
+          fileParts: nonTextParts,
+          time: Date.now(),
         },
       ])
     } else {
@@ -1710,11 +1743,11 @@ export function Prompt(props: PromptProps) {
                 <Show when={sendQueue().length > 0}>
                   <text fg={theme.text}>
                     enter{" "}
-                    <span style={{ fg: theme.primary }}>{`send now (${sendQueue().length})`}</span>
+                    <span style={{ fg: theme.primary }}>{`send queued (${sendQueue().length})`}</span>
                   </text>
                   <text fg={theme.text}>
                     {queueRemoveShortcut()}{" "}
-                    <span style={{ fg: theme.textMuted }}>remove queued</span>
+                    <span style={{ fg: theme.textMuted }}>edit queued</span>
                   </text>
                 </Show>
               </box>
