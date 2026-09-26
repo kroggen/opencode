@@ -423,9 +423,27 @@ export function Session() {
   function toBottom() {
     setTimeout(() => {
       if (!scroll || scroll.isDestroyed) return
+      // Re-enable sticky follow before jumping; the reading-mode poll keeps
+      // sticky disabled while the viewport is away from the bottom.
+      scroll.stickyScroll = true
       scroll.scrollTo(scroll.scrollHeight)
     }, 50)
   }
+
+  // Hard guarantee that reading is never interrupted: while the viewport is
+  // away from the bottom, sticky follow is disabled so nothing (streamed
+  // content, layout shifts, re-engage heuristics) can move the view. This is
+  // polled because wheel scrolling is handled inside the renderer and does not
+  // reach the keybind handlers.
+  function syncReadingMode() {
+    if (!scroll || scroll.isDestroyed) return
+    const max = scroll.scrollHeight - scroll.height
+    scroll.stickyScroll = scroll.scrollTop >= max - 1
+  }
+  onMount(() => {
+    const timer = setInterval(syncReadingMode, 250)
+    onCleanup(() => clearInterval(timer))
+  })
 
   const local = useLocal()
 
@@ -755,6 +773,7 @@ export function Session() {
       hidden: true,
       run: () => {
         scroll.scrollBy(-scroll.height / 2)
+        syncReadingMode()
         dialog.clear()
       },
     },
@@ -765,6 +784,7 @@ export function Session() {
       hidden: true,
       run: () => {
         scroll.scrollBy(scroll.height / 2)
+        syncReadingMode()
         dialog.clear()
       },
     },
@@ -775,6 +795,7 @@ export function Session() {
       hidden: true,
       run: () => {
         scroll.scrollBy(-1)
+        syncReadingMode()
         dialog.clear()
       },
     },
@@ -785,6 +806,7 @@ export function Session() {
       hidden: true,
       run: () => {
         scroll.scrollBy(1)
+        syncReadingMode()
         dialog.clear()
       },
     },
@@ -795,6 +817,7 @@ export function Session() {
       hidden: true,
       run: () => {
         scroll.scrollBy(-scroll.height / 4)
+        syncReadingMode()
         dialog.clear()
       },
     },
@@ -805,6 +828,7 @@ export function Session() {
       hidden: true,
       run: () => {
         scroll.scrollBy(scroll.height / 4)
+        syncReadingMode()
         dialog.clear()
       },
     },
@@ -815,6 +839,7 @@ export function Session() {
       hidden: true,
       run: () => {
         scroll.scrollTo(0)
+        syncReadingMode()
         dialog.clear()
       },
     },
@@ -824,7 +849,9 @@ export function Session() {
       category: "Session",
       hidden: true,
       run: () => {
+        scroll.stickyScroll = true
         scroll.scrollTo(scroll.scrollHeight)
+        syncReadingMode()
         dialog.clear()
       },
     },
