@@ -167,7 +167,7 @@ export function Prompt(props: PromptProps) {
   const stash = usePromptStash()
   const keymap = useOpencodeKeymap()
   const agentShortcut = useCommandShortcut("agent.cycle")
-  const queueRemoveShortcut = useCommandShortcut("prompt.queue.remove")
+  const queueEditShortcut = useCommandShortcut("prompt.queue.edit")
   const paletteShortcut = useCommandShortcut("command.palette.show")
   const renderer = useRenderer()
   const exit = useExit()
@@ -449,8 +449,8 @@ export function Prompt(props: PromptProps) {
         },
       },
       {
-        title: "Edit queued messages",
-        name: "prompt.queue.remove",
+        title: "Edit queue",
+        name: "prompt.queue.edit",
         category: "Prompt",
         hidden: true,
         enabled: sendQueue().length > 0,
@@ -470,6 +470,16 @@ export function Prompt(props: PromptProps) {
               }}
             />
           ))
+        },
+      },
+      {
+        title: "Remove queued message",
+        name: "prompt.queue.remove",
+        category: "Prompt",
+        hidden: true,
+        enabled: sendQueue().length > 0,
+        run: () => {
+          setSendQueue(sendQueue().slice(0, -1))
         },
       },
       {
@@ -663,6 +673,7 @@ export function Prompt(props: PromptProps) {
       "prompt.submit",
       "prompt.editor",
       "prompt.editor_context.clear",
+      "prompt.queue.edit",
       "prompt.queue.remove",
       "prompt.stash",
       "prompt.stash.pop",
@@ -1751,8 +1762,8 @@ export function Prompt(props: PromptProps) {
                     <span style={{ fg: theme.primary }}>{`send queued (${sendQueue().length})`}</span>
                   </text>
                   <text fg={theme.text}>
-                    {queueRemoveShortcut()}{" "}
-                    <span style={{ fg: theme.textMuted }}>edit queued</span>
+                    {queueEditShortcut()}{" "}
+                    <span style={{ fg: theme.textMuted }}>edit queue</span>
                   </text>
                 </Show>
               </box>
