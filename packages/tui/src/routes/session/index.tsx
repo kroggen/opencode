@@ -24,7 +24,7 @@ import { SplitBorder } from "../../ui/border"
 import { useTuiPaths, useTuiTerminalEnvironment } from "../../context/runtime"
 import { Spinner } from "../../component/spinner"
 import { createSyntaxStyleMemo, generateSubtleSyntax, selectedForeground, useTheme } from "../../context/theme"
-import { BoxRenderable, ScrollBoxRenderable, addDefaultParsers, TextAttributes, RGBA } from "@opentui/core"
+import { BoxRenderable, Renderable, ScrollBoxRenderable, addDefaultParsers, TextAttributes, RGBA } from "@opentui/core"
 import { Prompt, type PromptRef } from "../../component/prompt"
 import { DialogRewind } from "../../component/dialog-rewind"
 import type {
@@ -444,10 +444,39 @@ export function Session() {
   // content, layout shifts, re-engage heuristics) can move the view. This is
   // polled because wheel scrolling is handled inside the renderer and does not
   // reach the keybind handlers.
+  let scrollAnchor: { child: Renderable; childY: number; scrollTop: number } | undefined
   function syncReadingMode() {
     if (!scroll || scroll.isDestroyed) return
+    const children = scroll.getChildren()
     const max = scroll.scrollHeight - scroll.height
-    scroll.stickyScroll = scroll.scrollTop >= max - 1
+    const atBottom = scroll.scrollTop >= max - 1
+    scroll.stickyScroll = atBottom
+    if (atBottom || children.length === 0) {
+      scrollAnchor = undefined
+      return
+    }
+    const scrollTop = scroll.scrollTop
+    const visible = children.find((child) => child.y + child.height > scrollTop)
+    if (!visible) {
+      scrollAnchor = undefined
+      return
+    }
+    if (scrollAnchor && scrollAnchor.child === visible) {
+      const drift = visible.y - scrollAnchor.childY
+      const expected = scrollAnchor.scrollTop + drift
+      if (scrollTop !== expected) {
+        // the user scrolled between polls; adopt their position
+        scrollAnchor = { child: visible, childY: visible.y, scrollTop }
+        return
+      }
+      if (drift !== 0) {
+        const compensated = Math.min(Math.max(expected, 0), max)
+        scroll.scrollTop = compensated
+        scrollAnchor = { child: visible, childY: visible.y, scrollTop: compensated }
+        return
+      }
+    }
+    scrollAnchor = { child: visible, childY: visible.y, scrollTop }
   }
   onMount(() => {
     const timer = setInterval(syncReadingMode, 250)
