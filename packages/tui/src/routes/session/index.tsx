@@ -26,6 +26,7 @@ import { Spinner } from "../../component/spinner"
 import { createSyntaxStyleMemo, generateSubtleSyntax, selectedForeground, useTheme } from "../../context/theme"
 import { BoxRenderable, ScrollBoxRenderable, addDefaultParsers, TextAttributes, RGBA } from "@opentui/core"
 import { Prompt, type PromptRef } from "../../component/prompt"
+import { DialogRewind } from "../../component/dialog-rewind"
 import type {
   AssistantMessage,
   Part,
@@ -659,6 +660,62 @@ export function Session() {
           ),
         )
         dialog.clear()
+      },
+    },
+    {
+      title: "Rewind to previous message",
+      value: "session.rewind",
+      category: "Session",
+      slash: {
+        name: "rewind",
+      },
+      run: () => {
+        const items = messagesBeforeRevert()
+          .filter((item) => item.role === "user")
+          .map((message) => ({
+            id: message.id,
+            time: message.time,
+            parts: sync.data.part[message.id] ?? [],
+          }))
+        if (items.length === 0) return
+        dialog.replace(() => (
+          <DialogRewind
+            messages={items}
+            onSelect={(messageID) => {
+              const message = items.find((item) => item.id === messageID)
+              if (!message) return
+              const status = sync.data.session_status?.[route.sessionID]
+              const abort =
+                status?.type !== "idle"
+                  ? sdk.client.session.abort({ sessionID: route.sessionID }).catch(() => {})
+                  : Promise.resolve()
+              void Promise.resolve(abort).then(() =>
+                sdk.client.session
+                  .revert({
+                    sessionID: route.sessionID,
+                    messageID,
+                    files: false,
+                  })
+                  .then(() => {
+                    toBottom()
+                  }),
+              )
+              const parts = sync.data.part[messageID]
+              prompt?.set(
+                parts.reduce(
+                  (agg, part) => {
+                    if (part.type === "text") {
+                      if (!part.synthetic) agg.input += part.text
+                    }
+                    if (part.type === "file") agg.parts.push(part)
+                    return agg
+                  },
+                  { input: "", parts: [] as PromptInfo["parts"] },
+                ),
+              )
+            }}
+          />
+        ))
       },
     },
     {

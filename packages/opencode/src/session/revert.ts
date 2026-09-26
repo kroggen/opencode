@@ -14,6 +14,9 @@ export const RevertInput = Schema.Struct({
   sessionID: SessionID,
   messageID: MessageID,
   partID: Schema.optional(PartID),
+  // When false, only conversation messages are truncated; file changes from
+  // the reverted turns stay on disk (snapshot/patch reversion is skipped).
+  files: Schema.optional(Schema.Boolean),
 })
 export type RevertInput = Schema.Schema.Type<typeof RevertInput>
 
@@ -48,7 +51,7 @@ const layer = Layer.effect(
         const remaining = []
         for (const part of msg.parts) {
           if (rev) {
-            if (part.type === "patch") patches.push(part)
+            if (part.type === "patch" && input.files !== false) patches.push(part)
             continue
           }
 
@@ -67,13 +70,19 @@ const layer = Layer.effect(
 
       if (!rev) return session
 
-      rev.snapshot = session.revert?.snapshot ?? (yield* snap.track())
-      if (session.revert?.snapshot) yield* snap.restore(session.revert.snapshot)
-      yield* snap.revert(patches)
+      if (input.files !== false) {
+        rev.snapshot = session.revert?.snapshot ?? (yield* snap.track())
+        if (session.revert?.snapshot) yield* snap.restore(session.revert.snapshot)
+        yield* snap.revert(patches)
+      } else if (session.revert?.snapshot) {
+        // Messages-only rewind keeps any pending file-revert snapshot so a
+        // later unrevert restores the files to the matching state.
+        rev.snapshot = session.revert.snapshot
+      }
       if (rev.snapshot) rev.diff = yield* snap.diff(rev.snapshot)
       const index = all.findIndex((msg) => msg.info.id === rev.messageID)
       const range = index < 0 ? [] : all.slice(index)
-      const diffs = yield* summary.computeDiff({ messages: range })
+      const diffs = input.files === false ? [] : yield* summary.computeDiff({ messages: range })
       yield* storage.write(["session_diff", input.sessionID], diffs).pipe(Effect.ignore)
       yield* events.publish(Session.Event.Diff, { sessionID: input.sessionID, diff: diffs })
       yield* sessions.setRevert({
