@@ -472,7 +472,13 @@ export function Prompt(props: PromptProps) {
                 const item = sendQueue().find((entry) => entry.id === id)
                 if (!item) return
                 setSendQueue(sendQueue().filter((entry) => entry.id !== id))
+                // Restore through the editor (like the undo flow): writing the
+                // store alone leaves the edit buffer empty and the next
+                // keystroke overwrites the restored text.
+                input.setText(item.text)
                 setStore("prompt", { input: item.text, parts: item.fileParts })
+                restoreExtmarksFromParts(item.fileParts)
+                input.gotoBufferEnd()
                 input.focus()
               }}
               onRemove={(id) => {
