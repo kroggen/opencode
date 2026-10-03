@@ -164,6 +164,7 @@ const context = createContext<{
   showTimestamps: () => boolean
   showDetails: () => boolean
   showGenericToolOutput: () => boolean
+  reading: () => boolean
   diffWrapMode: () => "word" | "none"
   providers: () => ReadonlyMap<string, Provider>
   sync: ReturnType<typeof useSync>
@@ -271,6 +272,9 @@ export function Session() {
   const showThinking = createMemo(() => true)
   const [timestamps, setTimestamps] = kv.signal<"hide" | "show">("timestamps", "hide")
   const [showDetails, setShowDetails] = kv.signal("tool_details_visibility", true)
+  // True while the viewport is scrolled away from the bottom: live regions
+  // (streaming tool output) freeze so the reader is not dragged along.
+  const [reading, setReading] = createSignal(false)
   const [showAssistantMetadata, _setShowAssistantMetadata] = kv.signal("assistant_metadata_visibility", true)
   const [showScrollbar, setShowScrollbar] = kv.signal("scrollbar_visible", false)
   const [diffWrapMode] = kv.signal<"word" | "none">("diff_wrap_mode", "word")
@@ -1275,6 +1279,7 @@ export function Session() {
           showTimestamps,
           showDetails,
           showGenericToolOutput,
+          reading,
           diffWrapMode,
           providers,
           sync,
@@ -1825,8 +1830,18 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
     return true
   })
 
+  // While the user is reading (scrolled away from the bottom), freeze the
+  // metadata so streaming tool output does not slide its tail window under
+  // the reader. Unfreezes on return to the bottom.
+  const [frozenMetadata, setFrozenMetadata] = createSignal<Record<string, unknown>>({})
+  createEffect(() => {
+    if (ctx.reading()) return
+    setFrozenMetadata(props.part.state.status === "pending" ? {} : (props.part.state.metadata ?? {}))
+  })
+
   const toolprops = {
     get metadata() {
+      if (ctx.reading()) return frozenMetadata()
       return props.part.state.status === "pending" ? {} : (props.part.state.metadata ?? {})
     },
     get input() {
