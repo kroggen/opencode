@@ -15,7 +15,13 @@ export interface ScrollAnchorBox {
   stickyScroll: boolean
 }
 
-type Anchor = { node: AnchorNode; nodeY: number; scrollTop: number }
+type Anchor = {
+  child: AnchorNode
+  childY: number
+  node: AnchorNode
+  nodeY: number
+  scrollTop: number
+}
 
 // Keeps the reading position stable while the user is scrolled away from the
 // bottom of a scroll box:
@@ -35,18 +41,25 @@ type Anchor = { node: AnchorNode; nodeY: number; scrollTop: number }
 export function createReadingAnchor(box: ScrollAnchorBox) {
   let anchor: Anchor | undefined
 
-  function topSpanningNode(): { node: AnchorNode; nodeY: number } | undefined {
+  // Returns the first visible content child (stable across message-internal
+  // re-renders) and the deepest renderable spanning the viewport's top edge.
+  function topSpanningNode():
+    | { child: AnchorNode; childY: number; node: AnchorNode; nodeY: number }
+    | undefined {
     const top = box.scrollTop
     let node: AnchorNode = box.content
     let nodeY = 0
+    let child: AnchorNode | undefined
+    let childY = 0
     for (let depth = 0; depth < 12; depth++) {
       const kids: AnchorNode[] = node.getChildren().slice().sort((a, b) => a.y - b.y)
       let next: AnchorNode | undefined
+      let nextY = 0
       for (const kid of kids) {
         const absY = nodeY + kid.y
         if (absY <= top && absY + kid.height > top) {
           next = kid
-          nodeY = absY
+          nextY = absY
           break
         }
       }
@@ -55,15 +68,22 @@ export function createReadingAnchor(box: ScrollAnchorBox) {
           const absY = nodeY + kid.y
           if (absY > top) {
             next = kid
-            nodeY = absY
+            nextY = absY
             break
           }
         }
       }
-      if (!next) return { node, nodeY }
+      if (!next) {
+        return { child: child ?? node, childY, node, nodeY }
+      }
+      if (depth === 0) {
+        child = next
+        childY = nextY
+      }
       node = next
+      nodeY = nextY
     }
-    return { node, nodeY }
+    return { child: child ?? node, childY, node, nodeY }
   }
 
   function compensate(): void {
@@ -79,21 +99,25 @@ export function createReadingAnchor(box: ScrollAnchorBox) {
       anchor = undefined
       return
     }
-    if (anchor && anchor.node === span.node) {
-      const drift = span.nodeY - anchor.nodeY
+    if (anchor && anchor.child === span.child) {
+      // Content drift = the reading child's own shift (growth in earlier
+      // messages, e.g. a new tool box) plus the inner node's shift (growth
+      // inside the same message above the reading point). A rebuilt inner
+      // node contributes only the child drift.
+      const drift = anchor.node === span.node ? span.nodeY - anchor.nodeY : span.childY - anchor.childY
       if (box.scrollTop !== anchor.scrollTop) {
         // the user scrolled since the last anchor; adopt their position
-        anchor = { node: span.node, nodeY: span.nodeY, scrollTop: box.scrollTop }
+        anchor = { child: span.child, childY: span.childY, node: span.node, nodeY: span.nodeY, scrollTop: box.scrollTop }
         return
       }
       if (drift !== 0) {
         const compensated = Math.min(Math.max(anchor.scrollTop + drift, 0), max)
         box.scrollTop = compensated
-        anchor = { node: span.node, nodeY: span.nodeY, scrollTop: compensated }
+        anchor = { child: span.child, childY: span.childY, node: span.node, nodeY: span.nodeY, scrollTop: compensated }
         return
       }
     }
-    anchor = { node: span.node, nodeY: span.nodeY, scrollTop: box.scrollTop }
+    anchor = { child: span.child, childY: span.childY, node: span.node, nodeY: span.nodeY, scrollTop: box.scrollTop }
   }
 
   // Wrap the content box's onSizeChange so the anchor is compensated in the
