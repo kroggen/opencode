@@ -457,20 +457,24 @@ export function Session() {
   // moment layout changes, before the frame is painted. The short interval is
   // only a fallback for wheel-driven scroll positions (handled inside the
   // renderer) and missed events.
+  // The scrollbox only exists once a session is open (inside <Show>), so the
+  // anchor is created lazily on first use rather than at mount.
   let readingAnchor: ReturnType<typeof createReadingAnchor> | undefined
   function compensateAnchor() {
-    readingAnchor?.compensate()
+    if (!scroll || scroll.isDestroyed) {
+      readingAnchor = undefined
+      return
+    }
+    if (!readingAnchor) {
+      readingAnchor = createReadingAnchor(scroll)
+      readingAnchor.attach()
+    }
+    readingAnchor.compensate()
   }
 
   onMount(() => {
-    if (!scroll || scroll.isDestroyed) return
-    readingAnchor = createReadingAnchor(scroll)
-    const detachAnchor = readingAnchor.attach()
     const timer = setInterval(compensateAnchor, 250)
-    onCleanup(() => {
-      clearInterval(timer)
-      detachAnchor()
-    })
+    onCleanup(() => clearInterval(timer))
   })
 
   const local = useLocal()
